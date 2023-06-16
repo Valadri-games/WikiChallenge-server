@@ -1,0 +1,18 @@
+{
+  "name": "wikichallenge-server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "Valentin Le Lièvre",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.1.4",
+    "mysql": "^2.18.1",
+    "nodemon": "^2.0.22",
+    "socket.io": "^4.6.2"
+  }
+}
