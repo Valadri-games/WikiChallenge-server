@@ -33,7 +33,9 @@ io.on('connection', (socket) => {
     console.log('New user connection');
 
     socket.on("getStartPage", (data) => {
-        let sql = `SELECT ID, title FROM pagetitles WHERE interest >= ${data.interestLow} AND interest <= ${data.interestHigh} AND difficulty >= ${data.difficultyLow} AND difficulty <= ${data.difficultyHigh} ORDER BY RAND() LIMIT 1`;
+        let randomInt = Math.floor(Math.random() * (10554407 - 45204 + 1)) + 45204; // Update if entries are added to the database, 19.09.2023
+
+        let sql = `SELECT ID, title FROM pagetitles WHERE (interest BETWEEN ${data.interestLow} AND ${data.interestHigh}) AND (difficulty BETWEEN ${data.difficultyLow} AND ${data.difficultyHigh}) AND ID >= ${randomInt} LIMIT 1`;
         dbConnection.query(sql, function (err, result) {
             if(err) throw err;
 
@@ -45,7 +47,9 @@ io.on('connection', (socket) => {
     });
 
     socket.on("getEndPage", (data) => {
-        let sql = `SELECT ID, title FROM pagetitles WHERE interest >= ${data.interestLow} AND interest <= ${data.interestHigh} AND difficulty >= ${data.difficultyLow} AND difficulty <= ${data.difficultyHigh} ORDER BY RAND() LIMIT 1`;
+        let randomInt = Math.floor(Math.random() * (10554407 - 45204 + 1)) + 45204; // Update if entries are added to the database, 19.09.2023
+
+        let sql = `SELECT ID, title FROM pagetitles WHERE (interest BETWEEN ${data.interestLow} AND ${data.interestHigh}) AND (difficulty BETWEEN ${data.difficultyLow} AND ${data.difficultyHigh}) AND ID >= ${randomInt} LIMIT 1`;
         dbConnection.query(sql, function (err, result) {
             if(err) throw err;
 
