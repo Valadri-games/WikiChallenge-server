@@ -20,7 +20,9 @@ dbConnection.connect(function(err) {
 });
 
 // Create an http server
-const server = http.createServer();
+const server = http.createServer(() => {
+    response.end('Server is running');
+});
 server.listen(process.env.SERVER_PORT);
 
 const io = new Server(server, {
@@ -58,6 +60,10 @@ io.on('connection', (socket) => {
                 title: result[0].title,
             });
         });
+    });
+
+    socket.on("getEndPage", (data) => {
+        
     });
 });
 
