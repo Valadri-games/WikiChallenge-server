@@ -20,7 +20,7 @@ dbConnection.connect(function(err) {
 });
 
 // Create an http server
-const server = http.createServer(() => {
+const server = http.createServer((request, response) => {
     response.writeHead(200, {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET",
