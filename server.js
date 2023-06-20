@@ -21,6 +21,10 @@ dbConnection.connect(function(err) {
 
 // Create an http server
 const server = http.createServer(() => {
+    response.writeHead(200, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET",
+    });
     response.end('Server is running');
 });
 server.listen(process.env.SERVER_PORT);
