@@ -10,9 +10,10 @@
   "author": "Valentin Le Lièvre",
   "license": "ISC",
   "dependencies": {
+    "bcrypt": "^5.0.1",
     "dotenv": "^16.1.4",
     "mysql": "^2.18.1",
-    "nodemon": "^2.0.22",
+    "nodemon": "^1.14.9",
     "socket.io": "^4.6.2"
   }
 }
