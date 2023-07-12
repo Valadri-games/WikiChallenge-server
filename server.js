@@ -8,7 +8,17 @@ import dotenv from 'dotenv';
 // Activate dotenv
 dotenv.config();
 
-var dbConnection = mysql.createConnection({
+// Features enabled
+let featuresEnabled = {
+    login: process.env.ENABLE_LOGIN || false,
+    signin: process.env.ENABLE_SIGNIN || false,
+    account: process.env.ENABLE_ACCOUNT || false,
+    dailyChallenge: process.env.ENABLE_DAILYCHALLENGE || false,
+    dailyChallengeLeaderboard: process.env.ENABLE_DAILYCHALLENGE_LEADERBOARD || false,
+}
+
+// Databse connection config
+const dbConnection = mysql.createConnection({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
@@ -30,6 +40,7 @@ const server = http.createServer((request, response) => {
 });
 server.listen(process.env.SERVER_PORT);
 
+// Socket.io server config
 const io = new Server(server, {
     cors: {
         origin: "*",
@@ -39,52 +50,32 @@ const io = new Server(server, {
 io.on('connection', (socket) => {
     console.log('New user connected');
 
-    socket.on("getStartPage", (data) => {
-        let randomInt = Math.floor(Math.random() * (10554407 - 45204 + 1)) + 45204; // Update if entries are added to the database, 19.09.2023
+    // Inform about enabled features
+    socket.emit("featuresEnabled", featuresEnabled);
 
-        let sql = `SELECT ID, title FROM pagetitles WHERE (interest BETWEEN ${data.interestLow} AND ${data.interestHigh}) AND (difficulty BETWEEN ${data.difficultyLow} AND ${data.difficultyHigh}) AND ID >= ${randomInt} LIMIT 1`;
-        dbConnection.query(sql, (err, result) => {
-            if(err) throw err;
-
-            socket.emit("getStartPage", {
-                id: result[0].ID,
-                title: result[0].title,
-            });
-        });
+    socket.on("getStartPage", async (data) => {
+        socket.emit("getStartPage", await getRandomPage(data));
     });
 
-    socket.on("getEndPage", (data) => {
-        let randomInt = Math.floor(Math.random() * (10554407 - 45204 + 1)) + 45204; // Update if entries are added to the database, 19.09.2023
-
-        let sql = `SELECT ID, title FROM pagetitles WHERE (interest BETWEEN ${data.interestLow} AND ${data.interestHigh}) AND (difficulty BETWEEN ${data.difficultyLow} AND ${data.difficultyHigh}) AND ID >= ${randomInt} LIMIT 1`;
-        dbConnection.query(sql, (err, result) => {
-            if(err) throw err;
-
-            socket.emit("getEndPage", {
-                id: result[0].ID,
-                title: result[0].title,
-            });
-        });
+    socket.on("getEndPage", async (data) => {
+        socket.emit("getEndPage", await getRandomPage(data));
     });
 
     socket.on("createAccount", async (data) => {
         // Check if user name already takensd
         let result = await checkUsernameAvailability(data.name);
-        if(result != true) {
-            socket.emit("createAccount", {
-                succes: false,
-                username: true,
-            });
-
-            return false;
-        }
+        if(result != true) return emitUnsuccessful(socket, "createAccount", 0x111);
 
         let joindate = Date.now();
         let passwordHash = await hashPass(data.password);
 
-        let sql = `INSERT INTO users (name, password, score, avatarid, joindate, gameplayed) VALUES ('${data.name}', '${passwordHash}', 0, ${data.avatarid}, ${joindate}, 0)`;
+        let sql = `
+            INSERT INTO users (name, password, avatarid, joindate, lastlogin) 
+            VALUES ('${data.name}', '${passwordHash}', ${data.avatarid}, ${joindate}, ${joindate})
+        `;
+
         dbConnection.query(sql, async (err, result) => {
-            if(err) throw err;
+            if(err) catchDbError(err, socket, "createAccount");
 
             let userID = result.insertId;
             let sessionid = await saveSessionId(userID);
@@ -98,20 +89,17 @@ io.on('connection', (socket) => {
 
     socket.on("login", async (data) => {
         let sql = `SELECT * FROM users WHERE name = '${data.name}'`;
+        
         dbConnection.query(sql, async (err, result) => {
-            if(err) throw err;
+            if(err) catchDbError(err, socket, "login");
 
-            if(result.length == 0) {
-                socket.emit("login", {
-                    succes: false,
-                });
-
-                return false;
-            }
+            if(result.length == 0) return emitUnsuccessful(socket, "login", 0x121);
 
             if(await verifyPass(data.password, result[0].password)) {
                 let sessionid = await saveSessionId(result[0].ID);
-                let userData = sortUserData(result[0]);
+
+                result[0].sessionid = sessionid;
+                let userData = await updateUserData(await getAllUserData(sortUserData(result[0]), socket, "login"), socket, "login");
 
                 socket.emit("login", {
                     succes: true,
@@ -119,42 +107,30 @@ io.on('connection', (socket) => {
                     data: userData,
                 });
             } else {
-                socket.emit("login", {
-                    succes: false,
-                });
-
-                return false;
+                return emitUnsuccessful(socket, "login", 0x121);
             }
         });
     });
 
     socket.on("sessionlogin", async (data) => {
-        let sql = `SELECT userssession.sessionid, userssession.userid, userssession.date, users.* FROM userssession INNER JOIN users ON userssession.userid = users.ID WHERE userssession.sessionid = '${data.sessionId}'`;
+        let sql = `SELECT userssession.sessionid, userssession.userid, userssession.date, users.* FROM userssession INNER JOIN users ON userssession.userid = users.ID WHERE userssession.sessionid = '${data.sessionid}'`;
+        
         dbConnection.query(sql, async (err, result) => {
-            if(err) throw err;
+            if(err) catchDbError(err, socket, "sessionlogin");
 
-            if(result.length == 0) {
-                socket.emit("sessionlogin", {
-                    succes: false,
-                });
+            if(result.length == 0) return emitUnsuccessful(socket, "sessionlogin", 0x122);
 
-                return false;
-            }
-
+            // Delete session id after 2 month
             if(result[0].date > Date.now() + 1000 * 60 * 60 * 24 * 62) { // 2 months
                 let sql = `DELETE FROM userssession WHERE ${result[0].sessionid}`;
-                dbConnection.query(sql, async (err, result) => {
-                    if(err) throw err;
-
-                    socket.emit("sessionlogin", {
-                        succes: false,
-                    });
+                
+                return dbConnection.query(sql, async (err, result) => {
+                    if(err) catchDbError(err, socket, "sessionlogin");
+                    return emitUnsuccessful(socket, "sessionlogin", 0x123);
                 });
-
-                return false;
             }
 
-            let userData = sortUserData(result[0]);
+            let userData = await updateUserData(await getAllUserData(sortUserData(result[0]), socket, "sessionlogin"), socket, "sessionlogin");
 
             socket.emit("sessionlogin", {
                 succes: true,
@@ -166,13 +142,29 @@ io.on('connection', (socket) => {
     });
 
     socket.on("saveUserData", async (data) => {
-        let sql = `UPDATE users INNER JOIN userssession ON users.ID = userssession.userid SET users.avatarid = ${data.avatarID}, users.gameplayed = ${data.gamePlayed}, users.score = ${data.accountScore}, users.name = '${data.name}' WHERE userssession.sessionid = '${data.sessionId}'`;
+        saveUserData(data, socket, "saveUserData");
+    });
+
+    socket.on("registergame", async (data) => {
+        let sql = `INSERT INTO gamesplayed (userid, pagefrom, pageto, gamemode, score, totaltime, date, pathlength) SELECT userid, '${data.pagefrom}', '${data.pageto}', ${data.gamemode}, ${data.score}, ${data.totaltime}, ${data.date}, ${data.pathlength} FROM userssession WHERE sessionid = '${data.sessionid}'`;
 
         dbConnection.query(sql, async (err, result) => {
             if(err) throw err;
         });
     });
 });
+
+function emitUnsuccessful(socket, keyword, code) {
+    socket.emit(keyword, {
+        succes: false,
+        code: code,
+    });
+}
+
+function catchDbError(err, socket, keyword) {
+    console.error(err);
+    emitUnsuccessful(socket, keyword, 0x2);
+}
 
 function hashPass(password) {
     return new Promise((resolve) => {
@@ -221,19 +213,171 @@ function saveSessionId(userID) {
     });
 }
 
+function saveUserData(userData, socket, keyword) {
+    return new Promise(async (resolve) => {
+        if(userData.lastlogin) await performExtendedSave(userData, socket, keyword); 
+
+        let sql = `
+            UPDATE users 
+            INNER JOIN userssession 
+            ON users.ID = userssession.userid 
+            SET users.avatarid = ${userData.avatarid}, 
+                users.name = '${userData.name}', 
+
+                users.dailychallengeplayed = ${userData.dailychallengeplayed}, 
+                users.easygame = ${userData.easygame}, 
+                users.mediumgame = ${userData.mediumgame}, 
+                users.hardgame = ${userData.hardgame}, 
+                users.randompagegame = ${userData.randompagegame}, 
+
+                users.gameplayed = ${userData.gameplayed}, 
+                users.score = ${userData.score}, 
+                users.pagesseen = ${userData.pagesseen}
+            WHERE userssession.sessionid = '${userData.sessionid}'`;
+
+        dbConnection.query(sql, async (err, result) => {
+            if(err) catchDbError(err, socket, keyword);
+
+            resolve(true);
+        });
+    });
+}
+
+function performExtendedSave(userData, socket, keyword) {
+    return new Promise(async (resolve) => {
+        let sql = `
+            UPDATE users 
+            INNER JOIN userssession 
+            ON users.ID = userssession.userid 
+            SET users.lastlogin = ${userData.lastlogin}, 
+                users.streakdays = '${userData.streakdays}', 
+
+                users.daylichallengepodium = '${userData.daylichallengepodium}' 
+            WHERE userssession.sessionid = '${userData.sessionid}'`;
+
+        dbConnection.query(sql, async (err, result) => {
+            if(err) catchDbError(err, socket, keyword);
+
+            resolve(true);
+        });
+    });
+}
+
 function sortUserData(data) {
-    return  {
-        score: data.score,
+    return {
+        sessionid: data.sessionid,
+
         avatarid: data.avatarid,
-        gameplayed: data.gameplayed,
-        joindate: data.joindate,
         name: data.name,
+
+        joindate: data.joindate,
+
+        dailychallengeplayed: data.dailychallengeplayed,
+        easygame: data.easygame,
+        mediumgame: data.mediumgame,
+        hardgame: data.hardgame,
+        randompagegame: data.randompagegame,
+
+        gameplayed: data.gameplayed,
+        score: data.score,
+        pagesseen: data.pagesseen,
+        daylichallengepodium: data.daylichallengepodium,
+
+        streakdays: data.streakdays,
+        lastlogin: data.lastlogin,
     };
+}
+
+async function getAllUserData(userData, socket, keyword) {
+    return new Promise(async (resolve) => {
+        let today = new Date();
+        today.setUTCHours(0, 0, 0, 0); // Today midnight
+
+        let sql = `SELECT COALESCE(SUM(score), 0) as totalscore, COUNT(gamesplayed.ID) as totalgames FROM gamesplayed INNER JOIN userssession ON userssession.userid = gamesplayed.userid WHERE userssession.sessionid = '${userData.sessionid}' AND gamesplayed.date >= ${today.getTime()}`;
+
+        dbConnection.query(sql, async (err, result) => {
+            if(err) catchDbError(err, socket, keyword);
+
+            userData.todaygamecount = result[0].totalgames;
+            userData.todayscorecount = result[0].totalscore;
+
+            resolve(userData);
+        });
+    });
+}
+
+async function updateUserData(userData, socket, keyword) {
+    // Update day streak count
+    if(isDateYesterday(userData.lastlogin)) userData.streakdays += 1;
+
+    userData.lastlogin = Date.now();
+
+    await saveUserData(userData, socket, keyword);
+    return userData;
+}
+
+function isDateYesterday(dateTimestamp) {
+    let yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    let providedDate = new Date(dateTimestamp);
+
+    return (providedDate.getDate() == yesterday.getDate() && providedDate.getMonth() == yesterday.getMonth() && providedDate.getFullYear() == yesterday.getFullYear());
+}
+
+async function getRandomPage(data) {
+    return new Promise(async (resolve) => {
+        // Better accuracy version of random page title generator
+        for(let i = 0; i < 200; i++) { // Higher max loop count will result in higher maximum response time
+            let promiseResult = await new Promise((resolveInside) => {
+                let randomInt = Math.floor(Math.random() * (10554407 - 45204 + 1)) + 45204; // Update if entries are added to the database, 19.09.2023
+                let randomIntMax = randomInt + 25; // Higher ap will result in less accuracy but better speed
+
+                let sql = `SELECT ID, title FROM pagetitles WHERE (interest BETWEEN ${data.interestLow} AND ${data.interestHigh}) AND (difficulty BETWEEN ${data.difficultyLow} AND ${data.difficultyHigh}) AND (ID BETWEEN ${randomInt} AND ${randomIntMax}) LIMIT 1`;
+                dbConnection.query(sql, (err, result) => {
+                    if(err) throw err;
+                    resolveInside(result);
+                });
+            });
+
+            if(promiseResult.length > 0) {
+                resolve(promiseResult[0]);
+                return;
+            }
+        }
+
+        // To avoid infinite while loop this will select a less random page after too many attemps of the better algorithm
+
+        let randomInt = Math.floor(Math.random() * (10554407 - 45204 + 1)) + 45204; // Update if entries are added to the database, 19.09.2023
+        let sql = `SELECT ID, title FROM pagetitles WHERE (interest BETWEEN ${data.interestLow} AND ${data.interestHigh}) AND (difficulty BETWEEN ${data.difficultyLow} AND ${data.difficultyHigh}) AND ID >= ${randomInt} LIMIT 1`;
+        dbConnection.query(sql, (err, result) => {
+            if(err) throw err;
+
+            if(result.lenght == 0) resolve(false);
+            else resolve({
+                id: result[0].ID,
+                title: result[0].title,
+            });
+        });
+    });
 }
 
 function randomInt(min, max) {
     return Math.trunc(Math.random() * (max - min + 1)) + min;
 }
+
+/* Error code
+
+0x1: User provided information
+    0x11: Signin step
+        0x111: Username already taken
+
+    0x12: Login step
+        0x121: Wrong name or password
+        0x122: Invalide session id
+        0x123: Session id too old
+
+*/
 
 // http.createServer(async (request, response) => {
 //     // Check if request method is different than GET
