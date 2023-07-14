@@ -331,7 +331,7 @@ async function getRandomPage(data) {
         for(let i = 0; i < 200; i++) { // Higher max loop count will result in higher maximum response time
             let promiseResult = await new Promise((resolveInside) => {
                 let randomInt = Math.floor(Math.random() * (10554407 - 45204 + 1)) + 45204; // Update if entries are added to the database, 19.09.2023
-                let randomIntMax = randomInt + 25; // Higher ap will result in less accuracy but better speed
+                let randomIntMax = randomInt + 15; // Higher ap will result in less accuracy but better speed
 
                 let sql = `SELECT ID, title FROM pagetitles WHERE (interest BETWEEN ${data.interestLow} AND ${data.interestHigh}) AND (difficulty BETWEEN ${data.difficultyLow} AND ${data.difficultyHigh}) AND (ID BETWEEN ${randomInt} AND ${randomIntMax}) LIMIT 1`;
                 dbConnection.query(sql, (err, result) => {
@@ -341,6 +341,8 @@ async function getRandomPage(data) {
             });
 
             if(promiseResult.length > 0) {
+                promiseResult[0].lessaccurate = false;
+                
                 resolve(promiseResult[0]);
                 return;
             }
@@ -353,10 +355,11 @@ async function getRandomPage(data) {
         dbConnection.query(sql, (err, result) => {
             if(err) throw err;
 
-            if(result.lenght == 0) resolve(false);
+            if(result.length == 0) resolve(false);
             else resolve({
                 id: result[0].ID,
                 title: result[0].title,
+                lessaccurate: true,
             });
         });
     });
