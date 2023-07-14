@@ -2,10 +2,9 @@
   "name": "wikichallenge-server",
   "version": "1.0.0",
   "description": "",
-  "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server/server.js"
   },
   "author": "Valentin Le Lièvre",
   "license": "ISC",

@@ -1,6 +1,7 @@
 import http from "http";
 import mysql from "mysql";
 import bcrypt from "bcrypt";
+import fs from "fs";
 
 import { Server } from "socket.io";
 import dotenv from 'dotenv';
@@ -23,6 +24,7 @@ const dbConnection = mysql.createConnection({
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database : 'wikichallenge',
+    multipleStatements: true,
 });
 
 dbConnection.connect((err) => {
@@ -32,11 +34,16 @@ dbConnection.connect((err) => {
 
 // Create an http server
 const server = http.createServer((request, response) => {
-    response.writeHead(200, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET",
+    fs.readFile('website/features.html',(err, data) => {
+        response.writeHead(200, {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET",
+            "Content-Length": data.length,
+        });
+
+        response.write(data);
+        response.end();
     });
-    response.end('Server is running');
 });
 server.listen(process.env.SERVER_PORT);
 
@@ -149,7 +156,53 @@ io.on('connection', (socket) => {
         let sql = `INSERT INTO gamesplayed (userid, pagefrom, pageto, gamemode, score, totaltime, date, pathlength) SELECT userid, '${data.pagefrom}', '${data.pageto}', ${data.gamemode}, ${data.score}, ${data.totaltime}, ${data.date}, ${data.pathlength} FROM userssession WHERE sessionid = '${data.sessionid}'`;
 
         dbConnection.query(sql, async (err, result) => {
-            if(err) throw err;
+            if(err) catchDbError(err, socket, "registergame");
+        });
+    });
+
+    socket.on("pathFun", async (data) => {
+        let increment = 0;
+        if(data.pathFun == 1) increment = -5;
+        else if(data.pathFun == 3) increment = 5;
+
+        let sql = `
+            UPDATE pagetitles 
+            SET interest = (interest + (${increment})) 
+            WHERE title = '${data.pagetitle}'`;
+
+        dbConnection.query(sql, async (err, result) => {
+            if(err) catchDbError(err, socket, "pathFun");
+        });
+    });
+
+    socket.on("pathDifficulty", async (data) => {
+        let increment = 0;
+        if(data.pathDifficulty == 1) increment = -1;
+        else if(data.pathDifficulty == 3) increment = 1;
+
+        let sql = `
+            UPDATE pagetitles 
+            SET difficulty = (interest + (${increment})) 
+            WHERE title = '${data.pagetitle}'`;
+
+        dbConnection.query(sql, async (err, result) => {
+            if(err) catchDbError(err, socket, "pathDifficulty");
+        });
+    });
+
+    socket.on("getDailyChallenge", async (data) => {
+        let today = getTodayMidnight();
+
+        let sql = `SELECT startpage, endpage, difficulty FROM dailychallenge WHERE date = ${today.getTime()}`;
+    
+        dbConnection.query(sql, (err, result) => {
+            if(err) catchDbError(err, socket, "getDailyChallenge");
+
+            socket.emit("getDailyChallenge", {
+                startpage: result[0].startpage,
+                endpage: result[0].endpage,
+                difficulty: result[0].difficulty,
+            });
         });
     });
 });
@@ -290,16 +343,35 @@ function sortUserData(data) {
 
 async function getAllUserData(userData, socket, keyword) {
     return new Promise(async (resolve) => {
-        let today = new Date();
-        today.setUTCHours(0, 0, 0, 0); // Today midnight
+        let today = getTodayMidnight();
 
-        let sql = `SELECT COALESCE(SUM(score), 0) as totalscore, COUNT(gamesplayed.ID) as totalgames FROM gamesplayed INNER JOIN userssession ON userssession.userid = gamesplayed.userid WHERE userssession.sessionid = '${userData.sessionid}' AND gamesplayed.date >= ${today.getTime()}`;
+        let sql = `
+            SELECT 
+                COALESCE(SUM(score), 0) as totalscore, 
+                COUNT(gamesplayed.ID) as totalgames 
+            FROM gamesplayed 
+            INNER JOIN userssession 
+            ON userssession.userid = gamesplayed.userid 
+            WHERE userssession.sessionid = '${userData.sessionid}' 
+            AND gamesplayed.date >= ${today.getTime()};
+
+            SELECT gamesplayed.score
+            FROM gamesplayed 
+            INNER JOIN userssession 
+            ON userssession.userid = gamesplayed.userid 
+            WHERE userssession.sessionid = '${userData.sessionid}' 
+            AND gamesplayed.date >= ${today.getTime()} 
+            AND gamesplayed.gamemode = 5;
+        `;
 
         dbConnection.query(sql, async (err, result) => {
             if(err) catchDbError(err, socket, keyword);
 
-            userData.todaygamecount = result[0].totalgames;
-            userData.todayscorecount = result[0].totalscore;
+            userData.todaygamecount = result[0][0].totalgames;
+            userData.todayscorecount = result[0][0].totalscore;
+
+            userData.dailychallengedone = result[1].length == 1 ? true : false;
+            userData.dailychallengescore = result[1][0].score;
 
             resolve(userData);
         });
@@ -323,6 +395,13 @@ function isDateYesterday(dateTimestamp) {
     let providedDate = new Date(dateTimestamp);
 
     return (providedDate.getDate() == yesterday.getDate() && providedDate.getMonth() == yesterday.getMonth() && providedDate.getFullYear() == yesterday.getFullYear());
+}
+
+function getTodayMidnight() {
+    let date = new Date();
+    date.setUTCHours(0, 0, 0, 0);
+
+    return date;
 }
 
 async function getRandomPage(data) {
