@@ -175,6 +175,23 @@ io.on('connection', (socket) => {
         });
     });
 
+    socket.on("dailyChallengeFun", async (data) => {
+        let today = getTodayMidnight();
+
+        let increment = 0;
+        if(data.pathFun == 1) increment = -1;
+        else if(data.pathFun == 3) increment = 1;
+
+        let sql = `
+            UPDATE dailychallenge 
+            SET fun = (fun + (${increment})) 
+            WHERE date = '${today.getTime()}'`;
+
+        dbConnection.query(sql, async (err, result) => {
+            if(err) catchDbError(err, socket, "dailyChallengeFun");
+        });
+    });
+
     socket.on("pathDifficulty", async (data) => {
         let increment = 0;
         if(data.pathDifficulty == 1) increment = -1;
