@@ -371,7 +371,9 @@ async function getAllUserData(userData, socket, keyword) {
             userData.todayscorecount = result[0][0].totalscore;
 
             userData.dailychallengedone = result[1].length == 1 ? true : false;
-            userData.dailychallengescore = result[1][0].score;
+            
+            if(result[1][0]) userData.dailychallengescore = result[1][0].score;
+            else userData.dailychallengescore = 0;
 
             resolve(userData);
         });
