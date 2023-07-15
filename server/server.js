@@ -222,6 +222,85 @@ io.on('connection', (socket) => {
             });
         });
     });
+
+    socket.on("getDailyChallengeLeaderboard", async (data) => {
+        let sql = `SELECT userid FROM userssession WHERE sessionid = '${data.sessionid}'`;
+    
+        dbConnection.query(sql, (err, result) => {
+            if(err) catchDbError(err, socket, "getDailyChallengeLeaderboard");
+
+            let today = getTodayMidnight();
+            let sql = `
+                SELECT gp.score, u.name, u.avatarid
+                FROM gamesplayed as gp
+                INNER JOIN users as u
+                ON u.ID = gp.userid
+                WHERE gp.date >= ${today.getTime()}
+                AND gp.gamemode = 5
+                AND u.name != 'dev'
+                ORDER BY gp.score
+                DESC
+                LIMIT 20;
+
+                SELECT gp.pathlength, u.name, u.avatarid
+                FROM gamesplayed as gp
+                INNER JOIN users as u
+                ON u.ID = gp.userid
+                WHERE gp.date >= ${today.getTime()}
+                AND gp.gamemode = 5
+                AND u.name != 'dev'
+                ORDER BY gp.pathlength
+                ASC
+                LIMIT 20;
+
+                SELECT gp.totaltime, u.name, u.avatarid
+                FROM gamesplayed as gp
+                INNER JOIN users as u
+                ON u.ID = gp.userid
+                WHERE gp.date >= ${today.getTime()}
+                AND gp.gamemode = 5
+                AND u.name != 'dev'
+                ORDER BY gp.totaltime
+                ASC
+                LIMIT 20;
+
+                SELECT
+                    COUNT(ID) as userRank
+                FROM gamesplayed
+                WHERE date >= ${today.getTime()}
+                AND gamemode = 5
+                AND userid != 30
+                AND score >= (SELECT score FROM gamesplayed WHERE gamemode = 5 AND date >= ${today.getTime()} AND userid = ${result[0].userid});
+
+                SELECT
+                    COUNT(ID) as userRank
+                FROM gamesplayed
+                WHERE date >= ${today.getTime()}
+                AND gamemode = 5
+                AND userid != 30
+                AND pathlength <= (SELECT pathlength FROM gamesplayed WHERE gamemode = 5 AND date >= ${today.getTime()} AND userid = ${result[0].userid});
+
+                SELECT
+                    COUNT(ID) as userRank
+                FROM gamesplayed
+                WHERE date >= ${today.getTime()}
+                AND gamemode = 5
+                AND userid != 30
+                AND totaltime <= (SELECT totaltime FROM gamesplayed WHERE gamemode = 5 AND date >= ${today.getTime()} AND userid = ${result[0].userid});
+            `;
+
+            // User id 30 == dev account
+    
+            dbConnection.query(sql, (err, result) => {
+                if(err) catchDbError(err, socket, "getDailyChallengeLeaderboard");
+
+                socket.emit("getDailyChallengeLeaderboard", {
+                    succes: true,
+                    result: result,
+                });
+            });
+        });
+    });
 });
 
 function emitUnsuccessful(socket, keyword, code) {
