@@ -497,10 +497,9 @@ function isDateYesterday(dateTimestamp) {
 
 function getTodayMidnight() {
     let date = new Date();
-    date.setHours(0);
-    date.setMinutes(0);
-    date.setSeconds(0);
-    date.setMilliseconds(0);
+    let timezoneOffset = -date.getTimezoneOffset() / 60;
+
+    date.setHours(timezoneOffset, 0, 0, 0);
 
     return date;
 }
