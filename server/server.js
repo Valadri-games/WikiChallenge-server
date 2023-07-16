@@ -229,6 +229,10 @@ io.on('connection', (socket) => {
         dbConnection.query(sql, (err, result) => {
             if(err) catchDbError(err, socket, "getDailyChallengeLeaderboard");
 
+            if(data.sessionid == "") result.push({ // If user load leaderboard without account
+                userid: 30,
+            });
+
             let today = getTodayMidnight();
             let sql = `
                 SELECT gp.score, u.name, u.avatarid
@@ -265,28 +269,37 @@ io.on('connection', (socket) => {
                 LIMIT 20;
 
                 SELECT
-                    COUNT(ID) as userRank
-                FROM gamesplayed
+                    COUNT(ID) as userrank,
+                    COALESCE(userinfos.score, 0) as userscore
+                FROM 
+                    gamesplayed, 
+                    (SELECT score FROM gamesplayed WHERE gamemode = 5 AND date >= ${today.getTime()} AND userid = ${result[0].userid}) as userinfos
                 WHERE date >= ${today.getTime()}
                 AND gamemode = 5
                 AND userid != 30
-                AND score >= (SELECT score FROM gamesplayed WHERE gamemode = 5 AND date >= ${today.getTime()} AND userid = ${result[0].userid});
+                AND gamesplayed.score >= userinfos.score;
 
                 SELECT
-                    COUNT(ID) as userRank
-                FROM gamesplayed
+                    COUNT(ID) as userrank,
+                    COALESCE(userinfos.pathlength, 0) as userpathlength
+                FROM 
+                    gamesplayed,
+                    (SELECT pathlength FROM gamesplayed WHERE gamemode = 5 AND date >= ${today.getTime()} AND userid = ${result[0].userid}) as userinfos
                 WHERE date >= ${today.getTime()}
                 AND gamemode = 5
                 AND userid != 30
-                AND pathlength <= (SELECT pathlength FROM gamesplayed WHERE gamemode = 5 AND date >= ${today.getTime()} AND userid = ${result[0].userid});
+                AND gamesplayed.pathlength <= userinfos.pathlength;
 
                 SELECT
-                    COUNT(ID) as userRank
-                FROM gamesplayed
+                    COUNT(ID) as userrank,
+                    COALESCE(userinfos.totaltime, 0) as usertotaltime
+                FROM 
+                    gamesplayed,
+                    (SELECT totaltime FROM gamesplayed WHERE gamemode = 5 AND date >= ${today.getTime()} AND userid = ${result[0].userid}) as userinfos
                 WHERE date >= ${today.getTime()}
                 AND gamemode = 5
                 AND userid != 30
-                AND totaltime <= (SELECT totaltime FROM gamesplayed WHERE gamemode = 5 AND date >= ${today.getTime()} AND userid = ${result[0].userid});
+                AND gamesplayed.totaltime <= userinfos.totaltime;
             `;
 
             // User id 30 == dev account
@@ -295,6 +308,95 @@ io.on('connection', (socket) => {
                 if(err) catchDbError(err, socket, "getDailyChallengeLeaderboard");
 
                 socket.emit("getDailyChallengeLeaderboard", {
+                    succes: true,
+                    result: result,
+                });
+            });
+        });
+    });
+
+    socket.on("getGeneralLeaderboard", async (data) => {
+        let sql = `SELECT userid FROM userssession WHERE sessionid = '${data.sessionid}'`;
+    
+        dbConnection.query(sql, (err, result) => {
+            if(err) catchDbError(err, socket, "getGeneralLeaderboard");
+
+            if(data.sessionid == "") result.push({ // If user load leaderboard without account
+                userid: 30,
+            });
+
+            let sql = `
+                SELECT score, name, avatarid
+                FROM users
+                WHERE name != 'dev'
+                ORDER BY score
+                DESC
+                LIMIT 100;
+
+                SELECT streakdays, name, avatarid
+                FROM users
+                WHERE name != 'dev'
+                ORDER BY streakdays
+                DESC
+                LIMIT 100;
+
+                SELECT gameplayed, name, avatarid
+                FROM users
+                WHERE name != 'dev'
+                ORDER BY gameplayed
+                DESC
+                LIMIT 100;
+
+                SELECT pagesseen, name, avatarid
+                FROM users
+                WHERE name != 'dev'
+                ORDER BY pagesseen
+                DESC
+                LIMIT 100;
+
+                SELECT
+                    COUNT(ID) as userrank,
+                    COALESCE(userinfos.score, 0) as userscore
+                FROM 
+                    users,
+                    (SELECT score FROM users WHERE ID = ${result[0].userid}) as userinfos
+                WHERE name != 'dev'
+                AND users.score >= userinfos.score;
+
+                SELECT
+                    COUNT(ID) as userrank,
+                    COALESCE(userinfos.streakdays, 0) as userstreakdays
+                FROM 
+                    users,
+                    (SELECT streakdays FROM users WHERE ID = ${result[0].userid}) as userinfos
+                WHERE name != 'dev'
+                AND users.streakdays >= userinfos.streakdays;
+
+                SELECT
+                    COUNT(ID) as userrank,
+                    COALESCE(userinfos.gameplayed, 0) as usergameplayed
+                FROM 
+                    users,
+                    (SELECT gameplayed FROM users WHERE ID = ${result[0].userid}) as userinfos
+                WHERE name != 'dev'
+                AND users.gameplayed >= userinfos.gameplayed;
+
+                SELECT
+                    COUNT(ID) as userrank,
+                    COALESCE(userinfos.pagesseen, 0) as userpagesseen
+                FROM 
+                    users,
+                    (SELECT pagesseen FROM users WHERE ID = ${result[0].userid}) as userinfos
+                WHERE name != 'dev'
+                AND users.pagesseen >= userinfos.pagesseen;
+            `;
+
+            // User id 30 == dev account
+    
+            dbConnection.query(sql, (err, result) => {
+                if(err) catchDbError(err, socket, "getGeneralLeaderboard");
+
+                socket.emit("getGeneralLeaderboard", {
                     succes: true,
                     result: result,
                 });
