@@ -19,7 +19,10 @@ let featuresEnabled = {
 }
 
 // Databse connection config
-const dbConnection = mysql.createConnection({
+
+const dbPool = mysql.createPool({
+    connectionLimit : 50,
+
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
@@ -28,13 +31,8 @@ const dbConnection = mysql.createConnection({
     multipleStatements: true,
 });
 
-dbConnection.connect((err) => {
-    if(err) throw err;
-    console.log("Database connected !");
-
-    dbConnection.query("SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''))", async (err, result) => {
-        if(err) console.log(err);
-    });
+dbPool.query("SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''))", async (err, result) => {
+    if(err) console.log(err);
 });
 
 // Create an http server
@@ -87,7 +85,7 @@ io.on('connection', (socket) => {
         `, 
         [data.name, passwordHash, data.avatarid, joindate, joindate]);
 
-        dbConnection.query(sql, async (err, result) => {
+        dbPool.query(sql, async (err, result) => {
             if(err) return catchDbError(err, socket, "createAccount");
 
             let userID = result.insertId;
@@ -105,7 +103,7 @@ io.on('connection', (socket) => {
     socket.on("login", async (data) => {
         let sql = mysql.format(`SELECT * FROM users WHERE name = ?`, [data.name]);
         
-        dbConnection.query(sql, async (err, result) => {
+        dbPool.query(sql, async (err, result) => {
             if(err) return catchDbError(err, socket, "login");
 
             if(result.length == 0) return emitUnsuccessful(socket, "login", 0x121);
@@ -144,32 +142,36 @@ io.on('connection', (socket) => {
             WHERE userssession.sessionid = ?`, 
         [data.sessionid]);
         
-        dbConnection.query(sql, async (err, result) => {
-            if(err) return catchDbError(err, socket, "sessionlogin");
+        dbPool.getConnection((err, connection) => {
+            connection.query(sql, async (err, result) => {
+                if(err) return catchDbError(err, socket, "sessionlogin", connection);
+    
+                if(result.length == 0) return emitUnsuccessful(socket, "sessionlogin", 0x122);
+    
+                // Delete session id after 2 month
+                if(result[0].date > Date.now() + 1000 * 60 * 60 * 24 * 62) { // 2 months
+                    let sql = mysql.format(`DELETE FROM userssession WHERE sessionid = ?`, [result[0].sessionid]);
+                    
+                    return connection.query(sql, async (err, result) => {
+                        connection.release();
 
-            if(result.length == 0) return emitUnsuccessful(socket, "sessionlogin", 0x122);
-
-            // Delete session id after 2 month
-            if(result[0].date > Date.now() + 1000 * 60 * 60 * 24 * 62) { // 2 months
-                let sql = mysql.format(`DELETE FROM userssession WHERE sessionid = ?`, [result[0].sessionid]);
-                
-                return dbConnection.query(sql, async (err, result) => {
-                    if(err) return catchDbError(err, socket, "sessionlogin");
-                    return emitUnsuccessful(socket, "sessionlogin", 0x123);
+                        if(err) return catchDbError(err, socket, "sessionlogin");
+                        return emitUnsuccessful(socket, "sessionlogin", 0x123);
+                    });
+                } else connection.release();
+    
+                let sortedData = sortUserData(result[0]);
+    
+                let allUserData = await getAllUserData(sortedData);
+                if(!allUserData) return emitUnsuccessful(socket, "sessionlogin", 0x3);
+    
+                let userData = await updateUserData(allUserData);
+                if(!userData) return emitUnsuccessful(socket, "sessionlogin", 0x3);
+    
+                socket.emit("sessionlogin", {
+                    succes: true,
+                    data: userData,
                 });
-            }
-
-            let sortedData = sortUserData(result[0]);
-
-            let allUserData = await getAllUserData(sortedData);
-            if(!allUserData) return emitUnsuccessful(socket, "sessionlogin", 0x3);
-
-            let userData = await updateUserData(allUserData);
-            if(!userData) return emitUnsuccessful(socket, "sessionlogin", 0x3);
-
-            socket.emit("sessionlogin", {
-                succes: true,
-                data: userData,
             });
         });
     });
@@ -204,7 +206,7 @@ io.on('connection', (socket) => {
         `,
         [data.pagefrom, data.pageto, data.gamemode, data.score, data.totaltime, data.date, data.pathlength, data.sessionid, data.score, data.sessionid]);
 
-        dbConnection.query(sql, async (err, result) => {
+        dbPool.query(sql, async (err, result) => {
             if(err) return catchDbError(err, socket, "registergame");
             socket.emit("registergame", { succes: true, });
         });
@@ -221,7 +223,7 @@ io.on('connection', (socket) => {
             WHERE title = ?`,
         [increment, data.pagetitle]);
 
-        dbConnection.query(sql, async (err, result) => {
+        dbPool.query(sql, async (err, result) => {
             if(err) return catchDbError(err, socket, "pathFun");
         });
     });
@@ -239,7 +241,7 @@ io.on('connection', (socket) => {
             WHERE date = ?`,
         [increment, today.getTime()]);
 
-        dbConnection.query(sql, async (err, result) => {
+        dbPool.query(sql, async (err, result) => {
             if(err) return catchDbError(err, socket, "dailyChallengeFun");
         });
     });
@@ -255,7 +257,7 @@ io.on('connection', (socket) => {
             WHERE title = ?'`,
         [increment, data.pagetitle]);
 
-        dbConnection.query(sql, async (err, result) => {
+        dbPool.query(sql, async (err, result) => {
             if(err) return catchDbError(err, socket, "pathDifficulty");
         });
     });
@@ -265,7 +267,7 @@ io.on('connection', (socket) => {
 
         let sql = mysql.format(`SELECT startpage, endpage, difficulty FROM dailychallenge WHERE date = ?`, [today.getTime()]);
     
-        dbConnection.query(sql, (err, result) => {
+        dbPool.query(sql, (err, result) => {
             if(err) return catchDbError(err, socket, "getDailyChallenge");
 
             if(result.length > 0) {
@@ -281,91 +283,95 @@ io.on('connection', (socket) => {
     socket.on("getDailyChallengeLeaderboard", async (data) => {
         let sql = mysql.format(`SELECT userid FROM userssession WHERE sessionid = ?`, [data.sessionid]);
     
-        dbConnection.query(sql, (err, result) => {
-            if(err) return catchDbError(err, socket, "getDailyChallengeLeaderboard");
-
-            let todayTime = Utils.getTodayMidnight().getTime();
-            let sql = mysql.format(`
-                SELECT gp.score, u.name, u.avatarid
-                FROM gamesplayed as gp
-                INNER JOIN users as u
-                ON u.ID = gp.userid
-                WHERE gp.date >= ?
-                AND gp.gamemode = 5
-                AND u.name != 'dev'
-                ORDER BY gp.score
-                DESC
-                LIMIT 20;
-
-                SELECT gp.pathlength, u.name, u.avatarid
-                FROM gamesplayed as gp
-                INNER JOIN users as u
-                ON u.ID = gp.userid
-                WHERE gp.date >= ?
-                AND gp.gamemode = 5
-                AND u.name != 'dev'
-                ORDER BY gp.pathlength
-                ASC
-                LIMIT 20;
-
-                SELECT gp.totaltime, u.name, u.avatarid
-                FROM gamesplayed as gp
-                INNER JOIN users as u
-                ON u.ID = gp.userid
-                WHERE gp.date >= ?
-                AND gp.gamemode = 5
-                AND u.name != 'dev'
-                ORDER BY gp.totaltime
-                ASC
-                LIMIT 20;
-            `,
-            [todayTime, todayTime, todayTime]);
-
-            let userid = result.length > 0 ? result[0].userid : 0;
-            if(userid != 0) {
-                sql += mysql.format(`
-                    SELECT
-                        COUNT(ID) as userrank,
-                        COALESCE(userinfos.score, 0) as userscore
-                    FROM 
-                        gamesplayed, 
-                        (SELECT score FROM gamesplayed WHERE gamemode = 5 AND date >= ? AND userid = ?) as userinfos
-                    WHERE date >= ?
-                    AND gamemode = 5
-                    AND userid != 30
-                    AND gamesplayed.score >= userinfos.score;
-
-                    SELECT
-                        COUNT(ID) as userrank,
-                        COALESCE(userinfos.pathlength, 0) as userpathlength
-                    FROM 
-                        gamesplayed,
-                        (SELECT pathlength FROM gamesplayed WHERE gamemode = 5 AND date >= ? AND userid = ?) as userinfos
-                    WHERE date >= ?
-                    AND gamemode = 5
-                    AND userid != 30
-                    AND gamesplayed.pathlength <= userinfos.pathlength;
-
-                    SELECT
-                        COUNT(ID) as userrank,
-                        COALESCE(userinfos.totaltime, 0) as usertotaltime
-                    FROM 
-                        gamesplayed,
-                        (SELECT totaltime FROM gamesplayed WHERE gamemode = 5 AND date >= ? AND userid = ?) as userinfos
-                    WHERE date >= ?
-                    AND gamemode = 5
-                    AND userid != 30
-                    AND gamesplayed.totaltime <= userinfos.totaltime;
+        dbPool.getConnection((err, connection) => {
+            connection.query(sql, (err, result) => {
+                if(err) return catchDbError(err, socket, "getDailyChallengeLeaderboard", connection);
+    
+                let todayTime = Utils.getTodayMidnight().getTime();
+                let sql = mysql.format(`
+                    SELECT gp.score, u.name, u.avatarid
+                    FROM gamesplayed as gp
+                    INNER JOIN users as u
+                    ON u.ID = gp.userid
+                    WHERE gp.date >= ?
+                    AND gp.gamemode = 5
+                    AND u.name != 'dev'
+                    ORDER BY gp.score
+                    DESC
+                    LIMIT 20;
+    
+                    SELECT gp.pathlength, u.name, u.avatarid
+                    FROM gamesplayed as gp
+                    INNER JOIN users as u
+                    ON u.ID = gp.userid
+                    WHERE gp.date >= ?
+                    AND gp.gamemode = 5
+                    AND u.name != 'dev'
+                    ORDER BY gp.pathlength
+                    ASC
+                    LIMIT 20;
+    
+                    SELECT gp.totaltime, u.name, u.avatarid
+                    FROM gamesplayed as gp
+                    INNER JOIN users as u
+                    ON u.ID = gp.userid
+                    WHERE gp.date >= ?
+                    AND gp.gamemode = 5
+                    AND u.name != 'dev'
+                    ORDER BY gp.totaltime
+                    ASC
+                    LIMIT 20;
                 `,
-                [todayTime, userid, todayTime, todayTime, userid, todayTime, todayTime, userid, todayTime]);
-            }
+                [todayTime, todayTime, todayTime]);
+    
+                let userid = result.length > 0 ? result[0].userid : 0;
+                if(userid != 0) {
+                    sql += mysql.format(`
+                        SELECT
+                            COUNT(ID) as userrank,
+                            COALESCE(userinfos.score, 0) as userscore
+                        FROM 
+                            gamesplayed, 
+                            (SELECT score FROM gamesplayed WHERE gamemode = 5 AND date >= ? AND userid = ?) as userinfos
+                        WHERE date >= ?
+                        AND gamemode = 5
+                        AND userid != 30
+                        AND gamesplayed.score >= userinfos.score;
+    
+                        SELECT
+                            COUNT(ID) as userrank,
+                            COALESCE(userinfos.pathlength, 0) as userpathlength
+                        FROM 
+                            gamesplayed,
+                            (SELECT pathlength FROM gamesplayed WHERE gamemode = 5 AND date >= ? AND userid = ?) as userinfos
+                        WHERE date >= ?
+                        AND gamemode = 5
+                        AND userid != 30
+                        AND gamesplayed.pathlength <= userinfos.pathlength;
+    
+                        SELECT
+                            COUNT(ID) as userrank,
+                            COALESCE(userinfos.totaltime, 0) as usertotaltime
+                        FROM 
+                            gamesplayed,
+                            (SELECT totaltime FROM gamesplayed WHERE gamemode = 5 AND date >= ? AND userid = ?) as userinfos
+                        WHERE date >= ?
+                        AND gamemode = 5
+                        AND userid != 30
+                        AND gamesplayed.totaltime <= userinfos.totaltime;
+                    `,
+                    [todayTime, userid, todayTime, todayTime, userid, todayTime, todayTime, userid, todayTime]);
+                }
+    
+                connection.query(sql, (err, result) => {
+                    connection.release();
 
-            dbConnection.query(sql, (err, result) => {
-                if(err) return catchDbError(err, socket, "getDailyChallengeLeaderboard");
-
-                socket.emit("getDailyChallengeLeaderboard", {
-                    succes: true,
-                    result: result,
+                    if(err) return catchDbError(err, socket, "getDailyChallengeLeaderboard");
+    
+                    socket.emit("getDailyChallengeLeaderboard", {
+                        succes: true,
+                        result: result,
+                    });
                 });
             });
         });
@@ -374,87 +380,90 @@ io.on('connection', (socket) => {
     socket.on("getGeneralLeaderboard", async (data) => {
         let sql = mysql.format(`SELECT userid FROM userssession WHERE sessionid = ?`, [data.sessionid]);
     
-        dbConnection.query(sql, (err, result) => {
-            if(err) return catchDbError(err, socket, "getGeneralLeaderboard");
-
-            if(data.sessionid == "") result.push({ // If user load leaderboard without account
-                userid: 30,
-            });
-
-            let sql = `
-                SELECT score, name, avatarid
-                FROM users
-                WHERE name != 'dev'
-                ORDER BY score
-                DESC
-                LIMIT 100;
-
-                SELECT streakdays, name, avatarid
-                FROM users
-                WHERE name != 'dev'
-                ORDER BY streakdays
-                DESC
-                LIMIT 100;
-
-                SELECT gameplayed, name, avatarid
-                FROM users
-                WHERE name != 'dev'
-                ORDER BY gameplayed
-                DESC
-                LIMIT 100;
-
-                SELECT pagesseen, name, avatarid
-                FROM users
-                WHERE name != 'dev'
-                ORDER BY pagesseen
-                DESC
-                LIMIT 100;
-
-                SELECT
-                    COUNT(ID) as userrank,
-                    COALESCE(userinfos.score, 0) as userscore
-                FROM 
-                    users,
-                    (SELECT score FROM users WHERE ID = ${result[0].userid}) as userinfos
-                WHERE name != 'dev'
-                AND users.score >= userinfos.score;
-
-                SELECT
-                    COUNT(ID) as userrank,
-                    COALESCE(userinfos.streakdays, 0) as userstreakdays
-                FROM 
-                    users,
-                    (SELECT streakdays FROM users WHERE ID = ${result[0].userid}) as userinfos
-                WHERE name != 'dev'
-                AND users.streakdays >= userinfos.streakdays;
-
-                SELECT
-                    COUNT(ID) as userrank,
-                    COALESCE(userinfos.gameplayed, 0) as usergameplayed
-                FROM 
-                    users,
-                    (SELECT gameplayed FROM users WHERE ID = ${result[0].userid}) as userinfos
-                WHERE name != 'dev'
-                AND users.gameplayed >= userinfos.gameplayed;
-
-                SELECT
-                    COUNT(ID) as userrank,
-                    COALESCE(userinfos.pagesseen, 0) as userpagesseen
-                FROM 
-                    users,
-                    (SELECT pagesseen FROM users WHERE ID = ${result[0].userid}) as userinfos
-                WHERE name != 'dev'
-                AND users.pagesseen >= userinfos.pagesseen;
-            `;
-
-            // User id 30 == dev account
+        dbPool.getConnection((err, connection) => {
+            connection.query(sql, (err, result) => {
+                if(err) return catchDbError(err, socket, "getGeneralLeaderboard", connection);
     
-            dbConnection.query(sql, (err, result) => {
-                if(err) return catchDbError(err, socket, "getGeneralLeaderboard");
-
-                socket.emit("getGeneralLeaderboard", {
-                    succes: true,
-                    result: result,
+                if(data.sessionid == "") result.push({ // If user load leaderboard without account
+                    userid: 30,
+                });
+    
+                let sql = `
+                    SELECT score, name, avatarid
+                    FROM users
+                    WHERE name != 'dev'
+                    ORDER BY score
+                    DESC
+                    LIMIT 100;
+    
+                    SELECT streakdays, name, avatarid
+                    FROM users
+                    WHERE name != 'dev'
+                    ORDER BY streakdays
+                    DESC
+                    LIMIT 100;
+    
+                    SELECT gameplayed, name, avatarid
+                    FROM users
+                    WHERE name != 'dev'
+                    ORDER BY gameplayed
+                    DESC
+                    LIMIT 100;
+    
+                    SELECT pagesseen, name, avatarid
+                    FROM users
+                    WHERE name != 'dev'
+                    ORDER BY pagesseen
+                    DESC
+                    LIMIT 100;
+    
+                    SELECT
+                        COUNT(ID) as userrank,
+                        COALESCE(userinfos.score, 0) as userscore
+                    FROM 
+                        users,
+                        (SELECT score FROM users WHERE ID = ${result[0].userid}) as userinfos
+                    WHERE name != 'dev'
+                    AND users.score >= userinfos.score;
+    
+                    SELECT
+                        COUNT(ID) as userrank,
+                        COALESCE(userinfos.streakdays, 0) as userstreakdays
+                    FROM 
+                        users,
+                        (SELECT streakdays FROM users WHERE ID = ${result[0].userid}) as userinfos
+                    WHERE name != 'dev'
+                    AND users.streakdays >= userinfos.streakdays;
+    
+                    SELECT
+                        COUNT(ID) as userrank,
+                        COALESCE(userinfos.gameplayed, 0) as usergameplayed
+                    FROM 
+                        users,
+                        (SELECT gameplayed FROM users WHERE ID = ${result[0].userid}) as userinfos
+                    WHERE name != 'dev'
+                    AND users.gameplayed >= userinfos.gameplayed;
+    
+                    SELECT
+                        COUNT(ID) as userrank,
+                        COALESCE(userinfos.pagesseen, 0) as userpagesseen
+                    FROM 
+                        users,
+                        (SELECT pagesseen FROM users WHERE ID = ${result[0].userid}) as userinfos
+                    WHERE name != 'dev'
+                    AND users.pagesseen >= userinfos.pagesseen;
+                `;
+    
+                // User id 30 == dev account
+        
+                connection.query(sql, (err, result) => {
+                    connection.release();
+                    if(err) return catchDbError(err, socket, "getGeneralLeaderboard");
+    
+                    socket.emit("getGeneralLeaderboard", {
+                        succes: true,
+                        result: result,
+                    });
                 });
             });
         });
@@ -468,8 +477,10 @@ function emitUnsuccessful(socket, keyword, code) {
     });
 }
 
-function catchDbError(err, socket, keyword) {
+function catchDbError(err, socket = false, keyword = false, connection = false) {
     console.error(err);
+
+    if(connection) connection.release();
     if(socket && keyword) emitUnsuccessful(socket, keyword, 0x2); 
 }
 
@@ -477,7 +488,7 @@ function checkUsernameAvailability(name) {
     return new Promise((resolve) => {
         let sql = mysql.format(`SELECT ID from users WHERE name = ?`, [name]);
 
-        dbConnection.query(sql, (err, result) => {
+        dbPool.query(sql, (err, result) => {
             if(err) return resolve(false);
             resolve((result.length > 0 ? false : true));
         });
@@ -492,7 +503,7 @@ function saveSessionId(userID) {
         let sessionid = await hashPass("" + userID + date + random);
         let sql = mysql.format(`INSERT INTO userssession (userid, sessionid, date) VALUES (?, ?, ?)`, [userID, sessionid, date]);
 
-        dbConnection.query(sql, async (err, result) => {
+        dbPool.query(sql, async (err, result) => {
             if(err) return resolve(false);
             resolve(sessionid);
         });
@@ -512,7 +523,7 @@ function saveUserData(userData) {
         `,
         [userData.avatarid, userData.sessionid]);
 
-        dbConnection.query(sql, async (err, result) => {
+        dbPool.query(sql, async (err, result) => {
             if(err) return resolve(false);
             resolve(true);
         });
@@ -533,7 +544,7 @@ function performExtendedSave(userData) {
         `,
         [userData.lastlogin, userData.streakdays, userData.daylichallengepodium, userData.sessionid]);
 
-        dbConnection.query(sql, async (err, result) => {
+        dbPool.query(sql, async (err, result) => {
             if(err) return resolve(false);
             resolve(true);
         });
@@ -589,7 +600,7 @@ async function getAllUserData(userData) {
         `,
         [userData.sessionid, today, userData.sessionid, today]);
 
-        dbConnection.query(sql, async (err, result) => {
+        dbPool.query(sql, async (err, result) => {
             if(err) return resolve(false);
 
             userData.todaygamecount = result[0][0].totalgames;
@@ -643,7 +654,7 @@ async function getRandomPage(data) {
                     LIMIT 1`,
                 [data.gamesettings.interestLow, data.gamesettings.interestHigh, data.gamesettings.difficultyLow, data.gamesettings.difficultyHigh, randomInt, randomIntMax]);
                 
-                dbConnection.query(sql, (err, result) => {
+                dbPool.query(sql, (err, result) => {
                     if(err) return resolve(false);
                     resolveInside(result);
                 });
@@ -672,7 +683,7 @@ async function getRandomPage(data) {
         `, [data.gamesettings.interestLow, data.gamesettings.interestHigh, data.gamesettings.difficultyLo, data.gamesettings.difficultyHigh, randomInt]);
         
         
-        dbConnection.query(sql, (err, result) => {
+        dbPool.query(sql, (err, result) => {
             if(err) return resolve(false);
 
             if(result.length == 0 || result[0].title == data.otherpage) resolve(false);
