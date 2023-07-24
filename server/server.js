@@ -254,7 +254,7 @@ io.on('connection', (socket) => {
         let sql = mysql.format(`
             UPDATE pagetitles 
             SET difficulty = (interest + (?)) 
-            WHERE title = ?'`,
+            WHERE title = ?`,
         [increment, data.pagetitle]);
 
         dbPool.query(sql, async (err, result) => {
