@@ -6,6 +6,16 @@ import fs from "fs";
 import { Server } from "socket.io";
 import dotenv from 'dotenv';
 
+// Logs date
+console.log("Script running, current date:", new Date())
+
+// Logs process args
+
+console.log("\nProcess args:")
+process.argv.forEach((val, index, array) => {
+    console.log("_ ", index + ': ' + val);
+});
+
 // Activate dotenv
 dotenv.config();
 
