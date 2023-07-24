@@ -1,1 +1,1 @@
-forever start -o logs/out.log -e logs/err.log -l logs/forever.log server/server.js
+forever start -o /var/www/served/WikiChallenge-server/logs/out.log -e /var/www/served/WikiChallenge-server/logs/err.log -l /var/www/served/WikiChallenge-server/logs/forever.log server/server.js
