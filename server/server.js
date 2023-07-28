@@ -6,6 +6,8 @@ import fs from "fs";
 import { Server } from "socket.io";
 import dotenv from 'dotenv';
 
+process.env.TZ = 'Europe/Paris'; // UTC +00:00
+
 // Logs date
 console.log("Script running, current date:", new Date())
 
@@ -87,7 +89,7 @@ io.on('connection', (socket) => {
         let passwordHash = await hashPass(data.password);
         if(!passwordHash) return emitUnsuccessful(socket, "createAccount", 0x3);
 
-        let joindate = Date.now();
+        let joindate = Utils.getDate().getTime();
 
         let sql = mysql.format(`
             INSERT INTO users (name, password, avatarid, joindate, lastlogin) 
@@ -159,7 +161,7 @@ io.on('connection', (socket) => {
                 if(result.length == 0) return emitUnsuccessful(socket, "sessionlogin", 0x122);
     
                 // Delete session id after 2 month
-                if(result[0].date > Date.now() + 1000 * 60 * 60 * 24 * 62) { // 2 months
+                if(result[0].date > Utils.getDate().getTime() + 1000 * 60 * 60 * 24 * 62) { // 2 months
                     let sql = mysql.format(`DELETE FROM userssession WHERE sessionid = ?`, [result[0].sessionid]);
                     
                     return connection.query(sql, async (err, result) => {
@@ -214,7 +216,7 @@ io.on('connection', (socket) => {
                 randompagegame = randompagegame + ${ data.gamemode == 4 ? 1 : 0 }
             WHERE userssession.sessionid = ?
         `,
-        [data.pagefrom, data.pageto, data.gamemode, data.score, data.totaltime, data.date, data.pathlength, data.sessionid, data.score, data.sessionid]);
+        [data.pagefrom, data.pageto, data.gamemode, data.score, data.totaltime, Utils.getDate().getTime(), data.pathlength, data.sessionid, data.score, data.sessionid]);
 
         dbPool.query(sql, async (err, result) => {
             if(err) return catchDbError(err, socket, "registergame");
@@ -287,6 +289,27 @@ io.on('connection', (socket) => {
                     difficulty: result[0].difficulty,
                 });
             } else emitUnsuccessful(socket, "getDailyChallenge", 0x21);
+        });
+    });
+
+    socket.on("startDailyChallenge", async (data) => {
+        let date = Utils.getDate().getTime();
+        let today = Utils.getTodayMidnight().getTime();
+
+        let sql = mysql.format(`
+            INSERT INTO gamesplayed (userid, pagefrom, pageto, gamemode, score, totaltime, date, pathlength)
+            SELECT 
+                (SELECT userid FROM userssession WHERE sessionid = ?),
+                startpage,
+                endpage,
+                5, 0, 0, ?, 0
+            FROM dailychallenge WHERE date = ?
+        `,
+        [data.sessionid, date, today]);
+
+        dbPool.query(sql, async (err, result) => {
+            if(err) return catchDbError(err, socket, "startDailyChallenge");
+            socket.emit("startDailyChallenge", { succes: true, });
         });
     });
 
@@ -507,7 +530,7 @@ function checkUsernameAvailability(name) {
 
 function saveSessionId(userID) {
     return new Promise(async (resolve) => {
-        let date = Date.now();
+        let date = Utils.getDate().getTime();
         let random = Utils.randomInt(1, 10000);
 
         let sessionid = await hashPass("" + userID + date + random);
@@ -598,7 +621,8 @@ async function getAllUserData(userData) {
             INNER JOIN userssession 
             ON userssession.userid = gamesplayed.userid 
             WHERE userssession.sessionid = ?
-            AND gamesplayed.date >= ?;
+            AND gamesplayed.date >= ?
+            AND gamesplayed.score != 0;
 
             SELECT gamesplayed.score
             FROM gamesplayed 
@@ -634,7 +658,7 @@ async function updateUserData(userData) {
     // Update day streak count
     if(Utils.isDateYesterday(userData.lastlogin)) userData.streakdays += 1;
 
-    userData.lastlogin = Date.now();
+    userData.lastlogin = Utils.getDate().getTime();
 
     let result = await saveUserData(userData);
 
@@ -729,8 +753,17 @@ function verifyPass(password, hash) {
 }
 
 class Utils {
+    static getDate() {
+        let date = new Date();
+        let timezoneOffset = -date.getTimezoneOffset() / 60;
+    
+        date.setHours(date.getHours() + timezoneOffset);
+    
+        return date;
+    }
+
     static isDateYesterday(dateTimestamp) {
-        let yesterday = new Date();
+        let yesterday = Utils.getDate();
         yesterday.setDate(yesterday.getDate() - 1);
     
         let providedDate = new Date(dateTimestamp);
@@ -739,7 +772,7 @@ class Utils {
     }
     
     static getTodayMidnight() {
-        let date = new Date();
+        let date = Utils.getDate();
         let timezoneOffset = -date.getTimezoneOffset() / 60;
     
         date.setHours(timezoneOffset, 0, 0, 0);
@@ -769,3 +802,5 @@ class Utils {
 0x3: Internal server error
 
 */
+
+// Daily challenge sql to insert row: INSERT INTO `dailychallenge` (startpage, endpage, date, difficulty) VALUES ("", "", , )
